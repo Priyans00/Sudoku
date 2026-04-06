@@ -6,7 +6,8 @@ import random
 
 import numpy as np
 
-from part1 import generate_sudoku, sudoku_to_matrix
+from matrix_representation import sudoku_to_matrix
+from sudoku_generator import generate_sudoku
 from solver_engine import (
     classify_difficulty,
     compute_nullity,

@@ -6,7 +6,8 @@ from typing import Any
 
 import numpy as np
 
-from part1 import generate_sudoku, sudoku_to_matrix
+from matrix_representation import sudoku_to_matrix
+from sudoku_generator import generate_sudoku
 
 
 TOLERANCE = 1e-10
