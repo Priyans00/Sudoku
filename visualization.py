@@ -1,9 +1,9 @@
 import matplotlib.pyplot as plt
 import numpy as np
 
-from sudoku_generator import generate_sudoku
+from sudoku_generator import generate_sudoku, print_sudoku
 from matrix_representation import sudoku_to_matrix
-from solver_engine import gaussian_elimination, matrix_rank
+from solver_engine import solve_via_rank_nullity, _format_grid
 
 
 def display_grid(grid, difficulty="Unknown"):
@@ -37,27 +37,37 @@ def display_grid(grid, difficulty="Unknown"):
 
 
 def run_demo():
-    grid = generate_sudoku()
+    # Generate a Sudoku puzzle with specified difficulty
+    difficulty_level = "medium"
+    grid = generate_sudoku(difficulty_level)
 
+    print(f"\n{'=' * 50}")
+    print(f"Generated {difficulty_level.upper()} Sudoku Puzzle (0 = empty)")
+    print(f"{'=' * 50}\n")
+    print_sudoku(grid)
+
+    # Convert Sudoku grid to matrix system Ax = b
     A, b = sudoku_to_matrix(grid)
+    print()
 
-    gaussian_elimination(A, b)
+    # Solve the puzzle using rank-nullity analysis
+    solved_grid, difficulty = solve_via_rank_nullity(A, b, grid)
 
-    rank = matrix_rank(A)
-    n = A.shape[1]
-    nullity = n - rank
+    if solved_grid is not None:
+        print(f"\n{'=' * 50}")
+        print(f"SOLVED PUZZLE")
+        print(f"{'=' * 50}\n")
+        print(_format_grid(solved_grid))
+        print()
 
-    if nullity == 0:
-        difficulty = "Easy"
-    elif nullity < 5:
-        difficulty = "Medium"
+        # Display grids side-by-side
+        display_grid(grid, f"Original — {difficulty_level.upper()}")
+        display_grid(solved_grid, f"Solution — {difficulty.upper()}")
     else:
-        difficulty = "Hard"
-
-    print(f"Rank: {rank}, Nullity: {nullity}")
-    print(f"Difficulty: {difficulty}")
-
-    display_grid(grid, difficulty)
+        print(f"\n{'=' * 50}")
+        print(f"SOLVER FAILED")
+        print(f"Difficulty classification: {difficulty}")
+        print(f"{'=' * 50}\n")
 
 
 if __name__ == "__main__":
