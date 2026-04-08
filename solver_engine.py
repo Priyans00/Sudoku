@@ -185,7 +185,7 @@ def rank_nullity_report(A: np.ndarray, tolerance: float = TOLERANCE) -> None:
         f"Rows: {n_rows}  |  Cols: {n_cols}  |  "
         f"Rank: {rank}  |  Nullity: {nullity}"
     )
-    print(f"Rank-Nullity check: {rank} + {nullity} = {n_cols} \u2713")
+    print(f"Rank-Nullity check: {rank} + {nullity} = {n_cols} [OK]")
 
 
 def classify_difficulty(grid: np.ndarray) -> dict[str, int | str]:
@@ -327,6 +327,64 @@ def _solve_sudoku_backtrack(grid: np.ndarray) -> np.ndarray | None:
     return None
 
 
+def _solve_sudoku_backtrack_with_stats(grid: np.ndarray) -> tuple[np.ndarray | None, dict[str, int]]:
+    """Solve Sudoku with backtracking and collect search-effort statistics.
+
+    Args:
+        grid: 9x9 Sudoku grid with 0 for empty cells.
+
+    Returns:
+        tuple[np.ndarray | None, dict[str, int]]: Solved grid (or None) and
+        stats including visited nodes and maximum recursion depth.
+    """
+    working = grid.copy()
+    stats = {"nodes": 0, "max_depth": 0}
+
+    def backtrack(depth: int = 0) -> bool:
+        stats["nodes"] += 1
+        if depth > stats["max_depth"]:
+            stats["max_depth"] = depth
+
+        # Find next empty cell using minimum remaining values (MRV) heuristic
+        best_cell = None
+        best_candidates = None
+        best_count = 10
+
+        for row in range(9):
+            for col in range(9):
+                if working[row, col] != 0:
+                    continue
+
+                candidates = [v for v in range(1, 10) if _is_valid_sudoku_cell(working, row, col, v)]
+                count = len(candidates)
+
+                if count == 0:
+                    return False
+                if count < best_count:
+                    best_count = count
+                    best_cell = (row, col)
+                    best_candidates = candidates
+                    if best_count == 1:
+                        break
+            if best_count == 1:
+                break
+
+        if best_cell is None:
+            return True
+
+        row, col = best_cell
+        for value in best_candidates:
+            working[row, col] = value
+            if backtrack(depth + 1):
+                return True
+            working[row, col] = 0
+
+        return False
+
+    solved = backtrack()
+    return (working if solved else None), stats
+
+
 def _is_valid_sudoku(grid: np.ndarray, tolerance: float = TOLERANCE) -> tuple[bool, str]:
     """Validate a 9x9 Sudoku grid against Sudoku rules.
 
@@ -436,11 +494,11 @@ def solve_via_rank_nullity(
 
     # Decision point: Check if the system is uniquely determined
     if nullity == 0:
-        print("✓ Nullity = 0 → Unique solution exists. Proceeding to solve...")
+        print("[OK] Nullity = 0 => Unique solution exists. Proceeding to solve...")
         print()
     else:
-        print(f"⚠ Nullity = {nullity} > 0 → Under-constrained system.")
-        print("  Attempting partial solve with available constraints...")
+        print(f"[!] Nullity = {nullity} > 0 => Under-constrained system.")
+        print("    Attempting partial solve with available constraints...")
         print()
 
     print("=" * 50)
@@ -455,16 +513,16 @@ def solve_via_rank_nullity(
 
     # Check system consistency
     if not is_consistent:
-        print("✗ System is INCONSISTENT → No solution exists for this Sudoku.")
+        print("[FAIL] System is INCONSISTENT => No solution exists for this Sudoku.")
         print()
         return None, "Inconsistent"
 
     if solution is None:
-        print("✗ Failed to extract solution vector.")
+        print("[FAIL] Failed to extract solution vector.")
         print()
         return None, "Failed"
 
-    print("✓ RREF applied successfully.")
+    print("[OK] RREF applied successfully.")
     print(f"  RREF shape: {rref_matrix.shape}")
     print(f"  Solution vector extracted (length: {len(solution)})")
     print()
@@ -488,35 +546,35 @@ def solve_via_rank_nullity(
         is_valid, validation_msg = _is_valid_sudoku(solved_grid, tolerance=tolerance)
 
         if is_valid:
-            print("✓ Grid reconstructed successfully from linear solution.")
+            print("[OK] Grid reconstructed successfully from linear solution.")
             print(f"  {validation_msg}")
             print()
         else:
-            print(f"⚠ Linear solution produced invalid grid: {validation_msg}")
+            print(f"[!] Linear solution produced invalid grid: {validation_msg}")
             print("  Falling back to constraint-satisfaction backtracking solver...")
             print()
 
             # Fallback: Use backtracking solver
             solved_grid = _solve_sudoku_backtrack(grid)
             if solved_grid is not None:
-                print("✓ Backtracking solver found a valid solution.")
+                print("[OK] Backtracking solver found a valid solution.")
                 print()
             else:
-                print("✗ Backtracking solver could not find a solution.")
+                print("[FAIL] Backtracking solver could not find a solution.")
                 print()
                 return None, "Unsolvable"
 
     except Exception as e:
-        print(f"⚠ Error during linear reconstruction: {e}")
+        print(f"[!] Error during linear reconstruction: {e}")
         print("  Falling back to constraint-satisfaction backtracking solver...")
         print()
 
         solved_grid = _solve_sudoku_backtrack(grid)
         if solved_grid is not None:
-            print("✓ Backtracking solver found a valid solution.")
+            print("[OK] Backtracking solver found a valid solution.")
             print()
         else:
-            print("✗ Backtracking solver could not find a solution.")
+            print("[FAIL] Backtracking solver could not find a solution.")
             print()
             return None, "Unsolvable"
 
@@ -534,6 +592,145 @@ def solve_via_rank_nullity(
     print()
 
     return solved_grid, difficulty
+
+
+def solve_binary_system(
+    A: np.ndarray,
+    b: np.ndarray,
+    grid: np.ndarray,
+    tolerance: float = TOLERANCE,
+    return_stats: bool = False,
+) -> np.ndarray | tuple[np.ndarray | None, dict[str, int]]:
+    """
+    Solve Sudoku using binary variable model (729 variables) with RREF and backtracking.
+    
+    This function:
+    1. Uses RREF to extract forced assignments from the binary constraint matrix
+    2. Applies lightweight backtracking only for remaining free cells
+    3. Tracks and reports how many cells were resolved by RREF vs backtracking
+    4. Validates the final solution
+    
+    Args:
+        A: Binary constraint matrix (typically shape (324+filled_cells, 729))
+        b: Right-hand side binary vector (shape: (324+filled_cells,))
+        grid: Original 9×9 Sudoku grid with filled cells (0 = empty)
+        tolerance: Floating-point tolerance for RREF
+    
+    Returns:
+        np.ndarray | tuple[np.ndarray | None, dict[str, int]]:
+        Solved grid, and optionally solver stats when return_stats=True.
+    """
+    print("=" * 50)
+    print("=== Binary System RREF Solving ===")
+    print("=" * 50)
+    
+    A_array, b_array = _validate_linear_system(A, b)
+    
+    # Apply RREF to constraint matrix
+    augmented = np.column_stack((A_array, b_array))
+    rref_matrix, pivot_cols = _rref(augmented, tolerance=tolerance)
+    
+    print(f"RREF computed. Pivot columns: {len(pivot_cols)}")
+    
+    # Initialize working grid
+    working_grid = grid.copy()
+    rref_resolved_count = int(np.count_nonzero(working_grid))  # Count already filled cells
+    
+    # Extract forced assignments from RREF
+    n_vars = A_array.shape[1]  # Should be 729
+    binary_solution = np.zeros(n_vars, dtype=int)
+    
+    # Set filled cells directly
+    for r in range(9):
+        for c in range(9):
+            if grid[r, c] != 0:
+                digit = int(grid[r, c]) - 1
+                var_idx = r * 81 + c * 9 + digit
+                binary_solution[var_idx] = 1
+    
+    # Extract deterministic assignments from RREF
+    for pivot_row, pivot_col in enumerate(pivot_cols):
+        if pivot_col < n_vars:  # Valid variable column
+            rhs_value = rref_matrix[pivot_row, -1]
+            # Check if this is a binary variable that's uniquely determined to 1
+            if abs(rhs_value - 1.0) < tolerance and pivot_col < n_vars:
+                row_values = rref_matrix[pivot_row, :n_vars]
+                # Check if this row represents a single variable (= 1)
+                nonzero_count = np.count_nonzero(np.abs(row_values) > tolerance)
+                if nonzero_count == 1 and abs(rref_matrix[pivot_row, pivot_col] - 1.0) < tolerance:
+                    binary_solution[pivot_col] = 1
+    
+    # Reconstruct grid from binary solution
+    temp_grid = np.zeros((9, 9), dtype=int)
+    for r in range(9):
+        for c in range(9):
+            for d in range(9):
+                var_idx = r * 81 + c * 9 + d
+                if binary_solution[var_idx] == 1:
+                    temp_grid[r, c] = d + 1
+                    break
+    
+    # Count cells resolved by RREF
+    rref_resolved_count = int(np.count_nonzero(temp_grid))
+    
+    # Use filled cells from original grid where RREF didn't assign
+    for r in range(9):
+        for c in range(9):
+            if temp_grid[r, c] == 0 and grid[r, c] != 0:
+                temp_grid[r, c] = grid[r, c]
+    
+    print(f"RREF resolved {rref_resolved_count} cells directly.")
+    
+    # Lightweight backtracking for remaining empty cells
+    unsolved_count = 81 - int(np.count_nonzero(temp_grid))
+    search_nodes = 0
+    search_depth = 0
+    if unsolved_count > 0:
+        print(f"Backtracking needed for remaining {unsolved_count} cells.")
+        solved_grid, bt_stats = _solve_sudoku_backtrack_with_stats(temp_grid)
+        search_nodes = int(bt_stats["nodes"])
+        search_depth = int(bt_stats["max_depth"])
+        print(f"Backtracking search nodes: {search_nodes}")
+        if solved_grid is None:
+            print("Backtracking failed to find solution.")
+            if return_stats:
+                return None, {
+                    "rref_resolved_cells": rref_resolved_count,
+                    "backtracking_cells": unsolved_count,
+                    "search_nodes": search_nodes,
+                    "search_max_depth": search_depth,
+                }
+            return None
+        backtrack_count = unsolved_count
+    else:
+        solved_grid = temp_grid
+        backtrack_count = 0
+    
+    # Validate solution
+    is_valid, validation_msg = _is_valid_sudoku(solved_grid, tolerance=tolerance)
+    if is_valid:
+        print(f"Validation: PASSED - {validation_msg}")
+    else:
+        print(f"Validation: FAILED - {validation_msg}")
+        if return_stats:
+            return None, {
+                "rref_resolved_cells": rref_resolved_count,
+                "backtracking_cells": backtrack_count,
+                "search_nodes": search_nodes,
+                "search_max_depth": search_depth,
+            }
+        return None
+    
+    print()
+    stats = {
+        "rref_resolved_cells": rref_resolved_count,
+        "backtracking_cells": backtrack_count,
+        "search_nodes": search_nodes,
+        "search_max_depth": search_depth,
+    }
+    if return_stats:
+        return solved_grid, stats
+    return solved_grid
 
 
 def _format_grid(grid: np.ndarray) -> str:
